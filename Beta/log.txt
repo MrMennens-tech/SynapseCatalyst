@@ -1,0 +1,21 @@
+[1.252] Starting boot.py...
+[1.437] Auto-reload disabled.
+[1.524] Report descriptor defined.
+[1.610] Attempting to enable USB HID...
+[1.694] USB HID enabled successfully.
+[1.781] USB CDC enabled.
+[1.868] Boot complete - CDC enabled, HID status logged above.
+[1.252] Starting boot.py...
+[1.338] Auto-reload disabled.
+[1.426] Report descriptor defined.
+[1.513] Attempting to enable USB HID...
+[1.600] USB HID enabled successfully.
+[1.687] USB CDC enabled.
+[1.776] Boot complete - CDC enabled, HID status logged above.
+[1.252] Starting boot.py...
+[1.337] Auto-reload disabled.
+[1.426] Report descriptor defined.
+[1.513] Attempting to enable USB HID...
+[1.602] USB HID enabled successfully.
+[1.691] USB CDC enabled.
+[1.779] Boot complete - CDC enabled, HID status logged above.

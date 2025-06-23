@@ -1,0 +1,43 @@
+{
+  "control_mode": "joystick",
+  "deadzone": 0.05,
+  "sensitivity": 2,
+  "blow_direction": "up",
+  "inhale_direction": "down",
+  "blow_button": "none",
+  "inhale_button": "none",
+  "blow_threshold": 0.5,
+  "inhale_threshold": 0.5,
+  "blow_gpio_threshold": 0.35,
+  "inhale_gpio_threshold": -0.7,
+  "led_enabled": true,
+  "led_start_brightness": 0.05,
+  "led_max_brightness": 1,
+  "led_color_mode": "rainbow",
+  "led_single_color": [
+    255,
+    0,
+    0
+  ],
+  "pep_mode_enabled": false,
+  "pep_target_value": 0.8,
+  "pep_hold_time": 2,
+  "pep_start_color": [
+    255,
+    0,
+    0
+  ],
+  "pep_success_color": [
+    0,
+    255,
+    0
+  ],
+  "pep_start_brightness": 0.3,
+  "pep_max_brightness": 1,
+  "pep_blink_times": 3,
+  "pep_blink_speed": 0.2,
+  "dfplayer_enabled": true,
+  "min_volume": 15,
+  "max_volume": 100,
+  "track_change_threshold": -0.05
+}
