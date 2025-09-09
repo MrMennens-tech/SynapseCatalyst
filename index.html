@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GroovTube Ontvanger</title>
+    <link href="https://fonts.googleapis.com/css?family=Roboto:400,500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+<div class="main-container">
+    <div class="header" style="display:flex;align-items:center;">
+        <img src="logo.png" alt="Mennens.Tech logo">
+        <h1 style="flex:1;">Synapse Catalyst</h1>
+        <div style="display:flex;align-items:center;gap:12px;margin-left:auto;">
+            <div id="headerStatusLive" class="header-status-block" style="background:#eee;color:#888;padding:8px 18px;border-radius:18px;font-weight:500;min-width:160px;text-align:center;display:inline-block;">
+                <span id="headerStatusText">Niet verbonden</span>
+            </div>
+            <div id="headerBreathLive" class="header-status-block" style="background:#e3f2fd;color:#062d36;padding:8px 18px;border-radius:18px;font-weight:500;min-width:120px;text-align:center;">
+                <span style="font-size:0.98em;">Realtime <br><span id="breathValueLiveHeader">-</span></span>
+            </div>
+        </div>
+    </div>
+    <div class="material-tabs">
+        <button class="material-tab active" data-tab="start">Start</button>
+        <button class="material-tab" data-tab="spelmodi">Spelmodi</button>
+        <button class="material-tab" data-tab="meting">Testen/Meting</button>
+        <button class="material-tab" data-tab="instellingen">Instellingen</button>
+    </div>
+    <div class="tab-content active" id="tab-start">
+        <div class="intro">
+            <h2>Welkom bij Synapse Catalyst!</h2>
+            <p>
+                Synapse Catalyst is een veelzijdig ademtrainings- en spelplatform. Verbind de Adapter, zet de GroovTube aan, kies een spelmodus of start een ademmeting.<br>
+                Gebruik de tabbladen hierboven om te wisselen tussen spelmodi, testen/meten en instellingen.<br>
+                <b>Let op:</b> Deze software bevindt zich nog in de testfase. Functionaliteit en vormgeving kunnen nog wijzigen.<br><br>
+                <b>Functionaliteit:</b><br>
+                <ul>
+                    <li><b>Spelmodi:</b> Kies uit verschillende spel- en trainingsmodi, zoals joystick/gamepad-besturing, knoppenmodus, PEP-modus (ademspiertraining), LED-feedback en MP3-speler. Elke modus heeft eigen instelbare parameters en live feedback.</li>
+                    <li><b>Testen/Meting:</b> Start een ademmeting, bekijk live grafieken en tabellen van je ademacties, en exporteer resultaten als PDF. Handig voor training, therapie of monitoring.</li>
+                    <li><b>Instellingen:</b> Importeer of exporteer alle instellingen via kopiëren/plakken van JSON. Je kunt instellingen delen of bewaren. In de toekomst komt er een vaste knop om instellingen direct op te slaan.</li>
+                </ul>
+                <b>Instellingen kopiëren/plakken:</b><br>
+                <ul>
+                    <li>Ga naar het tabblad <b>Instellingen</b> en gebruik de tekstvakken om instellingen te kopiëren of te plakken.</li>
+                    <li>Plak de instellingen in het tekstvak en klik op <b>Importeer</b> om ze toe te passen.</li>
+                    <li>Klik op <b>Exporteer</b> om de huidige instellingen te kopiëren en te bewaren of delen.</li>
+                    <li>Let op: dit is nu handmatig, in de toekomst komt er een vaste knop voor direct opslaan.</li>
+                </ul>
+                <b>Tip:</b> <i>Inspiratie</i> = inademen, <i>Expiratie</i> = uitademen.<br>
+            </p>
+        </div>
+        <button id="connectionButton" class="material-btn">Verbind de Adapter</button>
+        <button id="disconnectButton" class="material-btn" disabled>Verbinding verbreken</button>
+        <div id="statusDisplay" class="status disconnected">Niet verbonden met apparaat</div>
+        <div id="liveBreathData" class="status" style="background:#e3f2fd;color:#062d36;display:none;">
+            <b>Ruwe ademhalingswaarde:</b> <span id="breathValueLive">-</span>
+        </div>
+    </div>
+    <div class="tab-content" id="tab-spelmodi">
+        <div class="accordion-section">
+            <!-- Joystick/Gamepad Modus -->
+            <div class="accordion-item">
+                <label class="accordion-header">
+                    <input type="checkbox" id="enableJoystick" style="margin-right:10px;">
+                    <span style="font-weight:600;">Joystick/Gamepad Modus</span>
+                    <span style="font-size:0.95em;color:#666;margin-left:10px;">Bestuur games of apps met je ademhaling als joystick of knoppen.</span>
+                    <span class="accordion-arrow" style="margin-left:auto;transition:transform 0.2s;">&#9654;</span>
+                </label>
+                <div class="accordion-content">
+                    <div style="margin-bottom:18px;">
+                        <b>Joystick uitslag testbalk</b><br>
+                        <span style="font-size:0.95em;">Blaas of adem in en zie hoe ver de joystick uitslaat. De marker geeft aan bij welke waarde de joystick maximaal uitgestuurd is (100%).</span>
+                        <div class="testbar-wrap" style="position:relative;height:32px;">
+                            <div class="testbar" id="joystickCombinedTestbar"></div>
+                            <div class="testbar-marker" id="joystickMaxMarker"></div>
+                            <div class="testbar-dot" id="joystickLiveDot"></div>
+                        </div>
+                        <div style="display:flex;gap:16px;align-items:center;margin-top:8px;">
+                            <div style="flex:1;">
+                                <label>Maximale joystickwaarde (inademen)</label>
+                                <input type="range" id="joystickInhaleMax" min="-1.0" max="-0.1" step="0.01" value="-0.7">
+                                <div class="value-display">Maxpunt: <span id="joystickInhaleMaxValue">-0.7</span></div>
+                            </div>
+                            <div style="flex:1;">
+                                <label>Maximale joystickwaarde (uitademen)</label>
+                                <input type="range" id="joystickExhaleMax" min="0.1" max="1.0" step="0.01" value="0.7">
+                                <div class="value-display">Maxpunt: <span id="joystickExhaleMaxValue">0.7</span></div>
+                            </div>
+                        </div>
+                    </div>
+                    <label>Besturingsmodus</label>
+                <select id="controlMode">
+                    <option value="joystick">Joystick</option>
+                    <option value="buttons">Knoppen</option>
+                </select>
+            <div id="joystickControls" class="mode-specific active">
+                        <label>Deadzone</label>
+                    <input type="range" id="deadzone" min="0.01" max="0.1" step="0.01" value="0.05">
+                    <div class="value-display">Waarde: <span id="deadzoneValue">0.05</span></div>
+                        <div style="font-size:0.95em;color:#666;margin-bottom:10px;">Waarden binnen deze zone worden genegeerd, zodat kleine schommelingen niet tot joystickbeweging leiden.</div>
+                        <div style="display:flex;gap:16px;align-items:center;">
+                            <div style="flex:1;">
+                                <label>Blazen richting (expiratie)</label>
+                    <select id="blowDirection">
+                        <option value="up">Omhoog</option>
+                        <option value="down">Omlaag</option>
+                        <option value="left">Links</option>
+                        <option value="right">Rechts</option>
+                    </select>
+                </div>
+                            <div style="flex:1;">
+                                <label>Inspiratie richting</label>
+                    <select id="inhaleDirection">
+                        <option value="down">Omlaag</option>
+                        <option value="up">Omhoog</option>
+                        <option value="left">Links</option>
+                        <option value="right">Rechts</option>
+                    </select>
+                </div>
+            </div>
+                    </div>
+                    <div id="buttonControls" class="mode-specific" style="display:none;">
+                        <div style="font-size:0.95em;color:#666;margin-bottom:10px;">A/B/X/Y = standaard gamepadknoppen</div>
+                        <div style="display:flex;gap:16px;align-items:center;">
+                            <div style="flex:1;">
+                                <label>Expiratie Knop</label>
+                                <select id="expiratieButton">
+                        <option value="none">Geen</option>
+                        <option value="1">A</option>
+                        <option value="2">B</option>
+                        <option value="3">X</option>
+                        <option value="4">Y</option>
+                        <option value="5">RB</option>
+                        <option value="6">R</option>
+                        <option value="7">LB</option>
+                        <option value="8">L</option>
+                    </select>
+                    <div class="sub-control">
+                                    <label>Drempelwaarde Expiratie</label>
+                                    <input type="range" id="expiratieThreshold" min="0.1" max="1.0" step="0.01" value="0.5">
+                                    <div class="value-display">Waarde: <span id="expiratieThresholdValue">0.5</span></div>
+                    </div>
+                </div>
+                            <div style="flex:1;">
+                                <label>Inspiratie Knop</label>
+                                <select id="inspiratieButton">
+                        <option value="none">Geen</option>
+                        <option value="1">A</option>
+                        <option value="2">B</option>
+                        <option value="3">X</option>
+                        <option value="4">Y</option>
+                        <option value="5">RB</option>
+                        <option value="6">R</option>
+                        <option value="7">LB</option>
+                        <option value="8">L</option>
+                    </select>
+                    <div class="sub-control">
+                                    <label>Drempelwaarde Inspiratie</label>
+                                    <input type="range" id="inspiratieThreshold" min="-1.0" max="-0.1" step="0.01" value="-0.5">
+                                    <div class="value-display">Waarde: <span id="inspiratieThresholdValue">-0.5</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- 3,5mm Output (centrale testbalk) -->
+            <div class="accordion-item">
+                <label class="accordion-header">
+                    <input type="checkbox" id="enableGPIO" style="margin-right:10px;">
+                    <span style="font-weight:600;">3,5mm Output</span>
+                    <span style="font-size:0.95em;color:#666;margin-left:10px;">Schakel een apparaat of relais met je ademhaling via de 3,5mm jack.</span>
+                    <span class="accordion-arrow" style="margin-left:auto;transition:transform 0.2s;">&#9654;</span>
+                </label>
+                <div class="accordion-content">
+                    <div style="margin-bottom:18px;">
+                        <b>Testbalk inspiratie/expiratie</b><br>
+                        <span style="font-size:0.95em;">Blaas of adem in en kijk of je één van de drempels haalt. Pas de sliders aan tot het goed voelt.</span>
+                        <div class="testbar-wrap" style="position:relative;height:32px;">
+                            <div class="testbar" id="gpioCombinedTestbar"></div>
+                            <div class="testbar-marker" id="gpioInhaleMarker"></div>
+                            <div class="testbar-marker" id="gpioExhaleMarker"></div>
+                            <div class="testbar-dot" id="gpioLiveDot"></div>
+                        </div>
+                        <div style="display:flex;gap:16px;align-items:center;margin-top:8px;">
+                            <div style="flex:1;">
+                                <label>Inspiratie drempel (inademen)</label>
+                                <input type="range" id="gpioInhaleThreshold" min="-1.0" max="-0.1" step="0.01" value="-0.7">
+                                <div class="value-display">Drempelwaarde: <span id="gpioInhaleThresholdValue">-0.7</span></div>
+                            </div>
+                            <div style="flex:1;">
+                                <label>Expiratie drempel (uitademen)</label>
+                                <input type="range" id="gpioExhaleThreshold" min="0.1" max="1.0" step="0.01" value="0.7">
+                                <div class="value-display">Drempelwaarde: <span id="gpioExhaleThresholdValue">0.7</span></div>
+                            </div>
+                        </div>
+                    </div>
+                    <label>Duur (ms, 0 = zolang drempel actief)</label>
+                    <input type="number" id="gpioDuration" min="0" max="10000" step="100" value="0">
+                    <div class="value-display">Waarde: <span id="gpioDurationValue">0</span> ms</div>
+                </div>
+            </div>
+            <!-- LED Ring Modus -->
+            <div class="accordion-item">
+                <label class="accordion-header">
+                    <input type="checkbox" id="enableLED" style="margin-right:10px;">
+                    <span style="font-weight:600;">Interactief LED Spel</span>
+                    <span style="font-size:0.95em;color:#666;margin-left:10px;">Visuele feedback met LED-ring, instelbare kleur en helderheid.</span>
+                    <span class="accordion-arrow" style="margin-left:auto;transition:transform 0.2s;">&#9654;</span>
+                </label>
+                <div class="accordion-content">
+                    <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;">
+                        <div style="flex:1;min-width:120px;">
+                            <label>Start Helderheid (%)</label>
+                            <input type="range" id="ledStartBrightness" min="1" max="100" step="1" value="5">
+                            <div class="value-display">Waarde: <span id="ledStartBrightnessValue">5</span>%</div>
+                        </div>
+                        <div style="flex:1;min-width:120px;">
+                            <label>Maximum Helderheid (%)</label>
+                            <input type="range" id="ledMaxBrightness" min="1" max="100" step="1" value="100">
+                            <div class="value-display">Waarde: <span id="ledMaxBrightnessValue">100</span>%</div>
+                        </div>
+                    </div>
+                    <label>Kleur Modus</label>
+                    <select id="ledColorMode">
+                        <option value="rainbow">Regenboog</option>
+                        <option value="solid">Effen</option>
+                        <option value="breath">Ademhaling</option>
+                    </select>
+                    <div style="margin-top:12px;">
+                        <label for="ledSingleColor"><b>Startkleur LED Spel</b></label>
+                        <input type="color" id="ledSingleColor" value="#ff0000" style="width:48px;height:32px;vertical-align:middle;margin-left:8px;">
+                    </div>
+                </div>
+            </div>
+            <!-- PEP Modus -->
+            <div class="accordion-item">
+                <label class="accordion-header">
+                    <input type="checkbox" id="enablePEP" style="margin-right:10px;">
+                    <span style="font-weight:600;">PEP Modus</span>
+                    <span style="font-size:0.95em;color:#666;margin-left:10px;">Train je ademspieren met visuele feedback en beloning.</span>
+                    <span class="accordion-arrow" style="margin-left:auto;transition:transform 0.2s;">&#9654;</span>
+                </label>
+                <div class="accordion-content">
+                    <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;">
+                        <div style="flex:1;min-width:120px;">
+                            <label>PEP Doelwaarde</label>
+                            <input type="range" id="pepTarget" min="0.1" max="1.0" step="0.01" value="0.8">
+                            <div class="value-display">Waarde: <span id="pepTargetValue">0.8</span></div>
+                        </div>
+                        <div style="flex:1;min-width:120px;">
+                            <label>Start Helderheid (%)</label>
+                            <input type="range" id="pepStartBrightness" min="1" max="100" step="1" value="30">
+                            <div class="value-display">Waarde: <span id="pepStartBrightnessValue">30</span>%</div>
+                        </div>
+                        <div style="flex:1;min-width:120px;">
+                            <label>Maximum Helderheid (%)</label>
+                            <input type="range" id="pepMaxBrightness" min="1" max="100" step="1" value="100">
+                            <div class="value-display">Waarde: <span id="pepMaxBrightnessValue">100</span>%</div>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;margin-top:12px;">
+                        <div style="flex:1;min-width:120px;">
+                            <label>Succes Tijd (seconden)</label>
+                            <input type="number" id="pepSuccessTime" min="1" max="10" step="1" value="2">
+                            <div class="value-display">Waarde: <span id="pepSuccessTimeValue">2</span> sec</div>
+                        </div>
+                        <div style="flex:1;min-width:120px;">
+                            <label>Aantal Knipperingen bij Succes</label>
+                            <input type="number" id="pepBlinkCount" min="1" max="10" step="1" value="3">
+                            <div class="value-display">Waarde: <span id="pepBlinkCountValue">3</span> keer</div>
+                        </div>
+                        <div style="flex:1;min-width:120px;">
+                            <label>Knippersnelheid (seconden)</label>
+                            <input type="number" id="pepBlinkSpeed" min="0.05" max="1.0" step="0.01" value="0.2">
+                            <div class="value-display">Waarde: <span id="pepBlinkSpeedValue">0.2</span> sec</div>
+                        </div>
+                    </div>
+                    <div style="flex:1;min-width:120px;">
+                        <label>Aantal herhalingen voor behalen PEP modus</label>
+                        <input type="number" id="pepRepeatCount" min="1" max="20" step="1" value="5">
+                        <div class="value-display">Waarde: <span id="pepRepeatCountValue">5</span> keer</div>
+                    </div>
+                    <div style="margin-top:18px;padding:12px 0 0 0;border-top:1px solid #eee;">
+                        <b>Beloning na behalen PEP herhalingen</b><br>
+                        <label for="pepRewardType">Beloningstype</label>
+                        <select id="pepRewardType" style="margin-bottom:12px;">
+                            <option value="mp3">MP3 nummer</option>
+                            <option value="led">LED effect</option>
+                            <option value="gpio">3,5mm Output</option>
+                        </select>
+                        <div id="pepRewardMp3Settings" style="display:none;">
+                            <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
+                                <div style="flex:1;min-width:120px;">
+                                    <label>MP3-nummer</label>
+                                    <select id="pepRewardMp3Track">
+                                        <option value="1">1</option>
+                                        <option value="2">2</option>
+                                        <option value="3">3</option>
+                                        <option value="4">4</option>
+                                        <option value="5">5</option>
+                                        <option value="6">6</option>
+                                        <option value="7">7</option>
+                                        <option value="8">8</option>
+                                        <option value="9">9</option>
+                                        <option value="10">10</option>
+                                    </select>
+                                </div>
+                                <div style="flex:1;min-width:120px;">
+                                    <label>MP3-volume</label>
+                                    <input type="range" id="pepRewardMp3Volume" min="0" max="100" step="1" value="80">
+                                    <div class="value-display">Waarde: <span id="pepRewardMp3VolumeValue">80</span></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="pepRewardLedSettings" style="display:none;">
+                            <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
+                                <div style="flex:1;min-width:120px;">
+                                    <label>LED-effect</label>
+                                    <select id="pepRewardLedEffect">
+                                        <option value="knipperen">Knipperen (standaard)</option>
+                                        <option value="regenboog">Regenboog</option>
+                                        <option value="disco">Disco</option>
+                                        <option value="fade">Fade</option>
+                                        <option value="effen">Effen kleur</option>
+                                    </select>
+                                </div>
+                                <div style="flex:1;min-width:120px;">
+                                    <label>LED-helderheid (%)</label>
+                                    <input type="range" id="pepRewardLedBrightness" min="1" max="100" step="1" value="80">
+                                    <div class="value-display">Waarde: <span id="pepRewardLedBrightnessValue">80</span>%</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="pepRewardGpioSettings" style="display:none;">
+                            <div style="flex:1;min-width:120px;">
+                                <label>3,5mm duur (ms)</label>
+                                <input type="range" id="pepRewardGpioDuration" min="0" max="5000" step="100" value="0">
+                                <div class="value-display">Waarde: <span id="pepRewardGpioDurationValue">0</span> ms</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- MP3 Speler Modus -->
+            <div class="accordion-item">
+                <label class="accordion-header">
+                    <input type="checkbox" id="enableMP3" style="margin-right:10px;">
+                    <span style="font-weight:600;">MP3 Speler Modus</span>
+                    <span style="font-size:0.95em;color:#666;margin-left:10px;">Speel muziek af en bedien de speler met je ademhaling.</span>
+                    <span class="accordion-arrow" style="margin-left:auto;transition:transform 0.2s;">&#9654;</span>
+                </label>
+                <div class="accordion-content">
+                    <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;">
+                        <div style="flex:1;min-width:120px;">
+                            <label>Start Volume (minimaal)</label>
+                            <input type="range" id="mp3MinVolume" min="0" max="100" step="1" value="15" oninput="document.getElementById('mp3MinVolumeValue').textContent=this.value;">
+                            <div class="value-display">Waarde: <span id="mp3MinVolumeValue">15</span></div>
+                        </div>
+                        <div style="flex:1;min-width:120px;">
+                            <label>Maximaal Volume</label>
+                            <input type="range" id="mp3MaxVolume" min="0" max="100" step="1" value="30" oninput="document.getElementById('mp3MaxVolumeValue').textContent=this.value;">
+                            <div class="value-display">Waarde: <span id="mp3MaxVolumeValue">30</span></div>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;margin-top:12px;">
+                        <div style="flex:1;min-width:120px;">
+                            <label>Gevoeligheid <br>(maximale expiratie voor maximaal volume)</label>
+                            <input type="range" id="mp3Sensitivity" min="0.2" max="1.0" step="0.01" value="0.4" oninput="document.getElementById('mp3SensitivityValue').textContent=this.value;">
+                            <div class="value-display">Waarde: <span id="mp3SensitivityValue">0.4</span></div>
+                        </div>
+                        <div style="flex:1;min-width:120px;">
+                            <label>Drempelwaarde inspiratie voor volgend nummer</label>
+                            <input type="range" id="mp3InhaleNextThreshold" min="-1.0" max="-0.01" step="0.01" value="-0.05" oninput="document.getElementById('mp3InhaleNextThresholdValue').textContent=this.value;">
+                            <div class="value-display">Waarde: <span id="mp3InhaleNextThresholdValue">-0.05</span></div>
+                        </div>
+                    </div>
+                    <div style="margin-top:18px;display:flex;gap:12px;">
+                        <button class="material-btn" id="mp3Prev" title="Vorige nummer" style="font-size:1.3em;padding:8px 14px;">
+                            &#9198;
+                        </button>
+                        <button class="material-btn" id="mp3Play" title="Play" style="font-size:1.3em;padding:8px 14px;">
+                            &#9654;
+                        </button>
+                        <button class="material-btn" id="mp3Pause" title="Pauze" style="font-size:1.3em;padding:8px 14px;">
+                            &#10073;&#10073;
+                        </button>
+                        <button class="material-btn" id="mp3Stop" title="Stop" style="font-size:1.3em;padding:8px 14px;">
+                            &#9632;
+                        </button>
+                        <button class="material-btn" id="mp3Next" title="Volgende nummer" style="font-size:1.3em;padding:8px 14px;">
+                            &#9197;
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="tab-content" id="tab-meting">
+        <div class="section">
+            <h2>Ademmeting/Testen</h2>
+            <div class="section">
+                <label for="testModeSelect"><b>Kies test/spelmodus</b></label>
+                <select id="testModeSelect" style="margin-bottom:12px;">
+                    <option value="free">Vrije meting (alleen registratie)</option>
+                    <option value="gpio">3,5mm Output</option>
+                    <option value="joystick">Joystick/Gamepad</option>
+                    <option value="pep">PEP Modus</option>
+                    <option value="mp3">MP3 Speler</option>
+                    <option value="led">Interactief LED Spel</option>
+                </select>
+                <div id="testModeSettings" style="margin-bottom:12px;"></div>
+                <label for="testRemarks"><b>Opmerkingen</b></label>
+                <textarea id="testRemarks" rows="2" style="width:100%;margin-bottom:16px;" placeholder="Typ hier eventuele bijzonderheden of observaties tijdens de test..."></textarea>
+            </div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+                <div style="flex:1;min-width:180px;">
+                    <label for="measurementName">Naam</label>
+                    <input type="text" id="measurementName" placeholder="Naam deelnemer">
+                </div>
+                <div style="flex:1;min-width:140px;">
+                    <label for="measurementDate">Datum</label>
+                    <input type="date" id="measurementDate">
+                </div>
+                <div style="flex:1;min-width:140px;">
+                    <label for="measurementDiameter">Diameter PEP-dopje</label>
+                    <select id="measurementDiameter">
+                        <option value="1">1 mm</option>
+                        <option value="1.5">1.5 mm</option>
+                        <option value="2">2 mm</option>
+                        <option value="2.5">2.5 mm</option>
+                    </select>
+                </div>
+                <div style="flex:1;min-width:160px;">
+                    <label for="measurementType">Testtype</label>
+                    <select id="measurementType">
+                        <option value="expiratie">Expiratie</option>
+                        <option value="inspiratie">Inspiratie</option>
+                        <option value="beide">Beide</option>
+                    </select>
+                </div>
+            </div>
+            <div style="display:flex;align-items:flex-end;justify-content:space-between;">
+                <canvas id="measurementChart" width="600" height="220"></canvas>
+                <div id="measurementCounters" style="display:flex;flex-direction:column;align-items:flex-end;margin-left:24px;">
+                    <span style="font-size:2.2em;color:#f57c00;font-weight:bold;line-height:1;" id="expCounter">0</span>
+                    <span style="font-size:1em;color:#f57c00;">expiraties</span>
+                    <span style="font-size:2.2em;color:#1976d2;font-weight:bold;line-height:1;margin-top:12px;" id="insCounter">0</span>
+                    <span style="font-size:1em;color:#1976d2;">inspiraties</span>
+                </div>
+            </div>
+            <div style="margin-bottom:18px;">
+                <div id="measurementTable"></div>
+            </div>
+            <button class="material-btn" id="startMeasurement">Start Meting</button>
+            <button class="material-btn" id="stopMeasurement">Stop Meting</button>
+            <button class="material-btn" id="exportPDF">Exporteer als PDF</button>
+            <div id="measurementSummary"></div>
+        </div>
+    </div>
+    <div class="tab-content" id="tab-instellingen">
+        <div class="section">
+            <h2>Instellingen</h2>
+            <label>Instellingen importeren/exporteren</label>
+            <textarea id="settingsExport" rows="6" style="width:100%;"></textarea>
+            <button class="material-btn" id="importSettings">Importeer</button>
+            <button class="material-btn" id="exportSettings">Exporteer</button>
+        </div>
+    </div>
+</div>
+    <script src="main.js"></script>
+</body>
+</html> 
