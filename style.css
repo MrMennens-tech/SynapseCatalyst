@@ -16,7 +16,6 @@ body {
     display: flex;
     align-items: center;
     padding: 24px 32px 0 32px;
-    margin-bottom: 18px;
 }
 .header img {
     height: 56px;
@@ -29,9 +28,24 @@ body {
     font-weight: 500;
     letter-spacing: 1px;
 }
+.actions-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 24px 32px;
+    border-bottom: 2px solid #e0e0e0;
+}
+.actions-header .status {
+    margin-left: auto; /* Pushes status to the right */
+    margin-bottom: 0;
+    padding: 8px 16px;
+    font-weight: 500;
+}
+.actions-header .material-btn {
+    margin: 0; /* Remove default margin for buttons in this header */
+}
 .material-tabs {
     display: flex;
-    border-bottom: 2px solid #e0e0e0;
     background: #062d36;
     border-radius: 16px 16px 0 0;
     overflow: hidden;
@@ -70,6 +84,7 @@ body {
     margin-bottom: 20px;
     border-radius: 5px;
     font-size: 1em;
+    text-align: center;
 }
 .status.connected {
     background-color: #e8f5e9;
@@ -93,9 +108,16 @@ body {
     margin: 8px 0;
     transition: background 0.2s;
 }
+.material-btn.secondary {
+    background-color: #6c757d;
+}
+.material-btn.secondary:hover:not(:disabled) {
+    background-color: #5a6268;
+}
 .material-btn:disabled {
     background: #b0bec5;
     cursor: not-allowed;
+    opacity: 0.7;
 }
 .material-btn:hover:not(:disabled) {
     background: #14505e;
@@ -147,7 +169,8 @@ input[type="date"] {
 @media (max-width: 700px) {
     .main-container { padding: 0 0 20px 0; }
     .tab-content { padding: 18px 8px 0 8px; }
-    .header { padding: 18px 8px 0 8px; }
+    .header { padding: 18px 8px 0 8px; flex-wrap: wrap; }
+    .actions-header { flex-wrap: wrap; padding: 16px 8px; }
 }
 /* Accordion styles */
 .accordion-section {
@@ -253,4 +276,4 @@ input[type="date"] {
         font-size: 0.98em;
         padding: 0 10px;
     }
-} 
+}

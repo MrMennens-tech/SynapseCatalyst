@@ -36,8 +36,17 @@ document.addEventListener('DOMContentLoaded', function() {
     let reader = null;
     let writer = null;
     let isConnected = false;
+    let hasUnsavedChanges = false;
     window.lastBreathValue = 0;
     let settingsCache = {};
+    
+    // Debug functie
+    function debugLog(message, ...args) {
+        const debugCheckbox = document.getElementById('enableDebug');
+        if (debugCheckbox && debugCheckbox.checked) {
+            console.log(message, ...args);
+        }
+    }
     
     const statusDisplay = document.getElementById('statusDisplay');
     const connectionButton = document.getElementById('connectionButton');
@@ -74,7 +83,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const val = parseFloat(inhaleSlider.value);
                 document.getElementById('gpioInhaleThresholdValue').textContent = val.toFixed(2);
                 settingsCache['inhale_gpio_threshold'] = val;
-                sendCommand('SET:settings::' + JSON.stringify({ 'inhale_gpio_threshold': val }));
+                sendSettingUpdate({ 'inhale_gpio_threshold': val });
             }
             inhaleSlider.addEventListener('input', updateInhaleSlider);
             // Bij settings ophalen
@@ -100,6 +109,11 @@ document.addEventListener('DOMContentLoaded', function() {
             updateHeaderBreath(val);
             updateGpioTestbars(val);
             updateJoystickTestbar(val); // FIX: testbalk beweegt nu mee
+            // Update ook knoppen testbalken als we in knoppen modus zijn
+            const controlMode = document.getElementById('controlMode')?.value;
+            if (controlMode === 'buttons') {
+                updateButtonTestbars(val);
+            }
             // Statusblok: als eerste data, status = groovtube
             lastBreathTimestamp = Date.now();
             setHeaderStatus('groovtube');
@@ -119,10 +133,28 @@ document.addEventListener('DOMContentLoaded', function() {
                 updateSlidersFromSettings(json);
                 updateModeCheckboxesFromSettings(json);
             } catch (e) { }
+        } else if (line.startsWith('PEP VOORTGANG:')) {
+            // PEP voortgang bericht verwerken
+            const match = line.match(/PEP VOORTGANG: (\d+)\/(\d+) herhalingen gehaald/);
+            if (match) {
+                if (!window.pepProgressData) {
+                    window.pepProgressData = { current: 0, total: 5 };
+                }
+                window.pepProgressData.current = parseInt(match[1]);
+                window.pepProgressData.total = parseInt(match[2]);
+                updatePepProgressCounter();
+                console.log(`PEP voortgang bijgewerkt: ${match[1]}/${match[2]}`);
+            }
+        } else if (line.startsWith('PEP_REWARD:PLAY_MP3::')) {
+            // Browser MP3 afspelen
+            const mp3File = line.split('::')[1];
+            if (mp3File && window.playPepRewardMp3) {
+                window.playPepRewardMp3(mp3File);
+            }
         } else if (line.startsWith('OK')) {
-            setStatus('Instellingen opgeslagen', true);
+            // Generic OK, can be used for feedback
         } else if (line.startsWith('ERROR')) {
-            setStatus('Fout: ' + line, false);
+            setStatus('Fout van apparaat: ' + line, false);
         }
     }
     // Bij verbinden
@@ -142,26 +174,103 @@ document.addEventListener('DOMContentLoaded', function() {
             setHeaderStatus('disconnected');
         }
     }
-    // Bij verbreken
+    
+    // Bij verbreken - NU MET OPSLAAN-LOGICA
     async function disconnectDevice() {
+        if (hasUnsavedChanges) {
+            setStatus('Instellingen worden opgeslagen, even geduld...', true, true);
+        }
+    
         try {
             if (reader) { await reader.cancel(); reader = null; }
             if (writer) { await writer.releaseLock(); writer = null; }
             if (port) { await port.close(); port = null; }
-        } catch (e) {}
+        } catch (e) {
+            // Errors during closing are often expected if the device reboots, so we can ignore them.
+        }
+        
         isConnected = false;
-        setStatus('Niet verbonden met apparaat', false);
-        setHeaderStatus('disconnected');
-        connectionButton.disabled = false;
-        disconnectButton.disabled = true;
+    
+        if (hasUnsavedChanges) {
+            // Give the device a moment to perform the save operation after disconnect.
+            setTimeout(() => {
+                setStatus('Instellingen opgeslagen. Verbinding verbroken.', false);
+                hasUnsavedChanges = false;
+                updateUnsavedChangesIndicator();
+            }, 2000); // 2 second delay for safety
+        } else {
+            setStatus('Niet verbonden met apparaat', false);
+        }
+    
         if (breathTimeoutInterval) { clearInterval(breathTimeoutInterval); breathTimeoutInterval = null; }
     }
     
-    function setStatus(text, ok) {
+    
+    function setStatus(text, ok, busy = false) {
         statusDisplay.textContent = text;
-        statusDisplay.className = 'status ' + (ok ? 'connected' : 'disconnected');
+        statusDisplay.className = 'status ' + (ok ? (busy ? 'adapter' : 'connected') : 'disconnected');
         connectionButton.disabled = !!ok;
-        disconnectButton.disabled = !ok;
+        disconnectButton.disabled = !ok || busy;
+    }
+    
+    // Toast melding functie voor backup feedback
+    function showToast(message, type = 'info') {
+        // Verwijder bestaande toast als die er is
+        const existingToast = document.querySelector('.toast-message');
+        if (existingToast) {
+            existingToast.remove();
+        }
+        
+        // Maak nieuwe toast
+        const toast = document.createElement('div');
+        toast.className = `toast-message toast-${type}`;
+        toast.textContent = message;
+        
+        // Voeg CSS toe als die nog niet bestaat
+        if (!document.querySelector('#toast-styles')) {
+            const style = document.createElement('style');
+            style.id = 'toast-styles';
+            style.textContent = `
+                .toast-message {
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    padding: 16px 24px;
+                    border-radius: 8px;
+                    color: white;
+                    font-weight: 500;
+                    z-index: 10000;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                    animation: slideIn 0.3s ease-out;
+                    max-width: 400px;
+                    word-wrap: break-word;
+                }
+                .toast-success { background: #4caf50; }
+                .toast-error { background: #f44336; }
+                .toast-info { background: #2196f3; }
+                .status.adapter { background-color: #fff3e0; color: #f57c00; border: 1px solid #ffe0b2; }
+                @keyframes slideIn {
+                    from { transform: translateX(100%); opacity: 0; }
+                    to { transform: translateX(0); opacity: 1; }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+        
+        // Voeg toast toe aan pagina
+        document.body.appendChild(toast);
+        
+        // Verwijder toast na 5 seconden
+        setTimeout(() => {
+            if (toast.parentNode) {
+                toast.remove();
+            }
+        }, 5000);
+        
+        // Verwijder toast bij klik
+        toast.addEventListener('click', () => {
+            toast.remove();
+        });
     }
     
     async function listenToDevice() {
@@ -182,9 +291,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
         } catch (e) {
-            setStatus('Verbinding verbroken: ' + e, false);
-            isConnected = false;
-            connectionButton.disabled = false;
+            if (isConnected) { // Only show error if we weren't expecting a disconnect
+                setStatus('Verbinding verbroken: ' + e, false);
+                isConnected = false;
+                connectionButton.disabled = false;
+            }
         }
     }
     
@@ -192,6 +303,33 @@ document.addEventListener('DOMContentLoaded', function() {
         if (writer) {
             writer.write(new TextEncoder().encode(cmd + '\n'));
         }
+    }
+    
+    function updateUnsavedChangesIndicator() {
+        const indicator = document.getElementById('autosaveStatusText');
+        if (!indicator) return;
+        if (hasUnsavedChanges) {
+            indicator.innerHTML = `
+                <strong style="color:#f57c00;">Wijzigingen niet opgeslagen</strong>
+                <div style="font-size:0.9em;color:#666;margin-top:2px;">
+                    Verbreek de verbinding om de laatste wijzigingen permanent op te slaan.
+                </div>`;
+            indicator.previousElementSibling.style.background = '#f57c00'; // The dot
+        } else {
+            indicator.innerHTML = `
+                <strong style="color:#28a745;">Instellingen opgeslagen</strong>
+                <div style="font-size:0.9em;color:#666;margin-top:2px;">
+                    Alle instellingen zijn up-to-date op het apparaat.
+                </div>`;
+            indicator.previousElementSibling.style.background = '#28a745';
+        }
+    }
+    
+    function sendSettingUpdate(settingObject) {
+        sendCommand('SET:settings::' + JSON.stringify(settingObject));
+        Object.assign(settingsCache, settingObject);
+        hasUnsavedChanges = true;
+        updateUnsavedChangesIndicator();
     }
     
     // --- Sliders & Settings ---
@@ -209,15 +347,41 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('gpioDuration').value = s.gpio_duration;
             document.getElementById('gpioDurationValue').textContent = s.gpio_duration;
         }
-        // TODO: andere sliders koppelen
+        
+        // Deadzone slider
+        if (s.deadzone !== undefined) {
+            const deadzoneSlider = document.getElementById('deadzone');
+            const deadzoneValue = document.getElementById('deadzoneValue');
+            if (deadzoneSlider && deadzoneValue) {
+                deadzoneSlider.value = s.deadzone;
+                deadzoneValue.textContent = s.deadzone.toFixed(2);
+            }
+        }
+        
+        // Joystick max waarden
+        if (s.joystick_inhale_max !== undefined) {
+            const inhaleMaxSlider = document.getElementById('joystickInhaleMax');
+            const inhaleMaxValue = document.getElementById('joystickInhaleMaxValue');
+            if (inhaleMaxSlider && inhaleMaxValue) {
+                inhaleMaxSlider.value = s.joystick_inhale_max;
+                inhaleMaxValue.textContent = s.joystick_inhale_max.toFixed(2);
+            }
+        }
+        if (s.joystick_exhale_max !== undefined) {
+            const exhaleMaxSlider = document.getElementById('joystickExhaleMax');
+            const exhaleMaxValue = document.getElementById('joystickExhaleMaxValue');
+            if (exhaleMaxSlider && exhaleMaxValue) {
+                exhaleMaxSlider.value = s.joystick_exhale_max;
+                exhaleMaxValue.textContent = s.joystick_exhale_max.toFixed(2);
+            }
+        }
     }
     
     function sliderSendSetting(id, key) {
         const el = document.getElementById(id);
         const val = el.type === 'range' || el.type === 'number' ? parseFloat(el.value) : el.value;
         document.getElementById(id+'Value').textContent = val;
-        settingsCache[key] = val;
-        sendCommand('SET:settings::' + JSON.stringify({ [key]: val }));
+        sendSettingUpdate({ [key]: val });
     }
     // 3,5mm Output sliders
     ['gpioExhaleThreshold','gpioInhaleThreshold','gpioDuration'].forEach((id,i) => {
@@ -271,6 +435,26 @@ document.addEventListener('DOMContentLoaded', function() {
         const testbar = document.getElementById('joystickCombinedTestbar');
         const maxMarker = document.getElementById('joystickMaxMarker');
         const liveDot = document.getElementById('joystickLiveDot');
+        
+        // Check of we in knoppen modus zijn
+        const controlMode = document.getElementById('controlMode').value;
+        const isButtonsMode = controlMode === 'buttons';
+        
+        if (isButtonsMode) {
+            // In knoppen modus: toon knoppen drempels
+            updateButtonTestbars(currentValue);
+            // Zorg dat live dot zichtbaar blijft in knoppen modus
+            if (liveDot) {
+                liveDot.style.display = '';
+                // Update live dot positie ook in knoppen modus
+                let dotPct = ((currentValue + 1) / 2) * 100;
+                liveDot.style.left = dotPct + '%';
+                liveDot.textContent = currentValue.toFixed(2);
+            }
+            return; // Skip joystick logica
+        }
+        
+        // Joystick modus logica
         // Marker kleur: blauw voor inademen, oranje voor uitademen
         if (currentValue < 0) {
             maxMarker.style.background = '#1976d2'; // blauw
@@ -307,6 +491,60 @@ document.addEventListener('DOMContentLoaded', function() {
     // Koppel testbalk aan live ademdata
     function joystickBreathListener(val) {
         updateJoystickTestbar(val);
+        // updateButtonTestbars wordt nu direct aangeroepen in handleDeviceLine
+    }
+    
+    // Knoppen drempel testbalken logica
+    function updateButtonTestbars(currentValue) {
+        try {
+            const debugCheckbox = document.getElementById('enableDebug');
+        
+        const expiratieThreshold = parseFloat(document.getElementById('expiratieThreshold').value);
+        const inspiratieThreshold = parseFloat(document.getElementById('inspiratieThreshold').value);
+        
+        // Gebruik de knoppen testbalk (buttonsCombinedTestbar)
+        const testbar = document.getElementById('buttonsCombinedTestbar');
+        const exhaleMarker = document.getElementById('buttonExhaleMarker');
+        const inhaleMarker = document.getElementById('buttonInhaleMarker');
+        const liveDot = document.getElementById('buttonsLiveDot');
+        
+        if (testbar && exhaleMarker && inhaleMarker && liveDot) {
+            
+            // Expiratie marker (uitademen) - oranje
+            let exhaleMarkerPct = ((expiratieThreshold + 1) / 2) * 100;
+            exhaleMarker.style.left = exhaleMarkerPct + '%';
+            exhaleMarker.style.background = '#f57c00'; // oranje
+            
+            // Inspiratie marker (inademen) - blauw
+            let inhaleMarkerPct = ((inspiratieThreshold + 1) / 2) * 100;
+            inhaleMarker.style.left = inhaleMarkerPct + '%';
+            inhaleMarker.style.background = '#1976d2'; // blauw
+            
+            // Live dot positie - ZORG DAT DEZE ALTIJD ZICHTBAAR IS
+            let dotPct = ((currentValue + 1) / 2) * 100;
+            liveDot.style.left = dotPct + '%';
+            liveDot.textContent = currentValue.toFixed(2);
+            liveDot.style.display = ''; // Zorg dat de dot altijd zichtbaar is
+            
+            // Balkkleur: groen als een van de drempels wordt gehaald
+            if ((currentValue >= expiratieThreshold) || (currentValue <= inspiratieThreshold)) {
+                testbar.style.background = '#4caf50'; // groen
+            } else {
+                testbar.style.background = '#e0e0e0'; // grijs
+            }
+            
+            // Debug output alleen als debug is ingeschakeld
+            if (debugCheckbox && debugCheckbox.checked) {
+                console.log(`🎯 Knoppen testbalk: breath=${currentValue.toFixed(3)}, exhale_threshold=${expiratieThreshold.toFixed(3)}, inhale_threshold=${inspiratieThreshold.toFixed(3)}, dot_position=${dotPct.toFixed(1)}%`);
+            }
+        } else {
+            if (debugCheckbox && debugCheckbox.checked) {
+                console.log(`🔧 updateButtonTestbars: HTML elementen niet gevonden!`);
+            }
+        }
+        } catch (error) {
+            console.error(`🔧 updateButtonTestbars: Fout opgetreden:`, error);
+        }
     }
     
     // --- Knoppenmodus sliders functioneel maken ---
@@ -315,11 +553,12 @@ document.addEventListener('DOMContentLoaded', function() {
         const valEl = document.getElementById(id+'Value');
         el.addEventListener('input',()=>{
             valEl.textContent = el.value;
+            // Update testbalken
+            updateButtonTestbars(window.lastBreathValue || 0);
             // Stuur direct naar device
-            let key = id === 'expiratieThreshold' ? 'expiratie_threshold' : 'inspiratie_threshold';
+            let key = id === 'expiratieThreshold' ? 'blow_threshold' : 'inhale_threshold';
             let val = parseFloat(el.value);
-            settingsCache[key] = val;
-            sendCommand('SET:settings::' + JSON.stringify({ [key]: val }));
+            sendSettingUpdate({ [key]: val });
         });
     });
     
@@ -333,8 +572,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Direct naar device sturen (key = id in snake_case)
                 let key = id.replace(/[A-Z]/g, m => '_' + m.toLowerCase());
                 let val = el.type === 'range' || el.type === 'number' ? parseFloat(el.value) : el.value;
-                settingsCache[key] = val;
-                sendCommand('SET:settings::' + JSON.stringify({ [key]: val }));
+                sendSettingUpdate({ [key]: val });
             });
         }
     });
@@ -351,38 +589,141 @@ document.addEventListener('DOMContentLoaded', function() {
     // Beloningstype logica
     const pepRewardType = document.getElementById('pepRewardType');
     const pepRewardMp3Settings = document.getElementById('pepRewardMp3Settings');
+    const pepRewardBrowserMp3Settings = document.getElementById('pepRewardBrowserMp3Settings');
     const pepRewardLedSettings = document.getElementById('pepRewardLedSettings');
     const pepRewardGpioSettings = document.getElementById('pepRewardGpioSettings');
     function updatePepRewardSettingsVisibility() {
         pepRewardMp3Settings.style.display = pepRewardType.value === 'mp3' ? '' : 'none';
+        pepRewardBrowserMp3Settings.style.display = pepRewardType.value === 'browser_mp3' ? '' : 'none';
         pepRewardLedSettings.style.display = pepRewardType.value === 'led' ? '' : 'none';
         pepRewardGpioSettings.style.display = pepRewardType.value === 'gpio' ? '' : 'none';
     }
     pepRewardType.addEventListener('change', updatePepRewardSettingsVisibility);
     updatePepRewardSettingsVisibility();
     
+    // --- Knoppen dropdowns functioneel maken ---
+    ['expiratieButton', 'inspiratieButton'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', () => {
+                let key = id === 'expiratieButton' ? 'blow_button' : 'inhale_button';
+                let val = el.value === 'none' ? 'none' : parseInt(el.value);
+                sendSettingUpdate({ [key]: val });
+                // Debug logging alleen als debug is ingeschakeld
+                const debugCheckbox = document.getElementById('enableDebug');
+                if (debugCheckbox && debugCheckbox.checked) {
+                    console.log(`🔧 ${key} bijgewerkt naar:`, val);
+                }
+            });
+        }
+    });
+    
     // --- Init ---
     setStatus('Niet verbonden met apparaat', false);
     
     // Zet event listeners voor verbind- en disconnectknop als laatste
-    connectionButton.onclick = connectDevice;
-    disconnectButton.onclick = disconnectDevice;
+    // Moderne event listener voor verbind knop
+    if (connectionButton) {
+        connectionButton.addEventListener('click', connectDevice);
+    }
+    if (disconnectButton) {
+        disconnectButton.addEventListener('click', disconnectDevice);
+    }
     
     // Toon alleen de juiste controls bij Besturingsmodus
     const controlModeSelect = document.getElementById('controlMode');
     const joystickControls = document.getElementById('joystickControls');
     const buttonControls = document.getElementById('buttonControls');
     function updateControlModeUI() {
+        const joystickTestSection = document.getElementById('joystickTestSection');
+        const exhaleMarker = document.getElementById('buttonExhaleMarker');
+        const inhaleMarker = document.getElementById('buttonInhaleMarker');
+        const joystickLiveDot = document.getElementById('joystickLiveDot');
+        const buttonsLiveDot = document.getElementById('buttonsLiveDot');
+        
         if (controlModeSelect.value === 'joystick') {
             joystickControls.style.display = '';
             buttonControls.style.display = 'none';
+            if (joystickTestSection) joystickTestSection.style.display = '';
+            // Verberg knoppen markers in joystick modus
+            if (exhaleMarker) exhaleMarker.style.display = 'none';
+            if (inhaleMarker) inhaleMarker.style.display = 'none';
+            // Zorg dat joystick live dot zichtbaar blijft
+            if (joystickLiveDot) joystickLiveDot.style.display = '';
+            if (buttonsLiveDot) buttonsLiveDot.style.display = 'none';
         } else {
             joystickControls.style.display = 'none';
             buttonControls.style.display = '';
+            if (joystickTestSection) joystickTestSection.style.display = 'none';
+            // Toon knoppen markers in knoppen modus
+            if (exhaleMarker) exhaleMarker.style.display = '';
+            if (inhaleMarker) inhaleMarker.style.display = '';
+            // Zorg dat knoppen live dot zichtbaar blijft
+            if (joystickLiveDot) joystickLiveDot.style.display = 'none';
+            if (buttonsLiveDot) buttonsLiveDot.style.display = '';
+            
+            // Update knoppen testbalken wanneer naar knoppen modus wordt gewisseld
+            if (window.lastBreathValue !== undefined) {
+                updateButtonTestbars(window.lastBreathValue);
+            }
         }
     }
-    controlModeSelect.addEventListener('change', updateControlModeUI);
+    controlModeSelect.addEventListener('change', () => {
+        const mode = controlModeSelect.value;
+        sendSettingUpdate({ 'control_mode': mode });
+        updateControlModeUI();
+        
+        // Debug: Toon huidige instellingen voor knoppen modus
+        const debugCheckbox = document.getElementById('enableDebug');
+        if (mode === 'buttons' && debugCheckbox && debugCheckbox.checked) {
+            console.log('🔧 Knoppen modus instellingen:');
+            console.log('  - Expiratie knop:', document.getElementById('expiratieButton').value);
+            console.log('  - Inspiratie knop:', document.getElementById('inspiratieButton').value);
+            console.log('  - Expiratie drempel:', document.getElementById('expiratieThreshold').value);
+            console.log('  - Inspiratie drempel:', document.getElementById('inspiratieThreshold').value);
+        }
+    });
     updateControlModeUI();
+    
+    // Zorg ervoor dat de UI correct wordt getoond bij het laden
+    setTimeout(() => {
+        updateControlModeUI();
+        // Initialiseer knoppen testbalken
+        if (window.lastBreathValue !== undefined) {
+            updateButtonTestbars(window.lastBreathValue);
+        }
+        
+        // Test de verbind knop
+        console.log('Verbind knop test:', connectionButton);
+        console.log('Disconnect knop test:', disconnectButton);
+        
+        // Controleer of de knoppen bestaan en voeg event listeners toe als ze nog niet bestaan
+        if (connectionButton && !connectionButton.onclick) {
+            connectionButton.addEventListener('click', connectDevice);
+            console.log('Verbind knop event listener toegevoegd');
+        }
+        if (disconnectButton && !disconnectButton.onclick) {
+            disconnectButton.addEventListener('click', disconnectDevice);
+            console.log('Disconnect knop event listener toegevoegd');
+        }
+    }, 100);
+    
+    // Extra check voor DOM ready
+    document.addEventListener('DOMContentLoaded', () => {
+        console.log('DOM geladen, controleer knoppen...');
+        if (connectionButton) {
+            console.log('Verbind knop gevonden, voeg event listener toe');
+            connectionButton.addEventListener('click', connectDevice);
+        } else {
+            console.log('Verbind knop NIET gevonden!');
+        }
+        if (disconnectButton) {
+            console.log('Disconnect knop gevonden, voeg event listener toe');
+            disconnectButton.addEventListener('click', disconnectDevice);
+        } else {
+            console.log('Disconnect knop NIET gevonden!');
+        }
+    });
     
     // === MEETLOGICA EN LIVE TABEL/GRAFIEK ===
     let measurementActive = false;
@@ -444,9 +785,37 @@ document.addEventListener('DOMContentLoaded', function() {
     
     function renderMeasurementChart() {
         if (measurementChart) measurementChart.destroy();
+        const chartType = document.getElementById('chartType').value;
         const labels = measurementActions.map((a,i) => `${a.type.charAt(0).toUpperCase()}${a.type.slice(1)} ${i+1}`);
-        const dataInspiratie = measurementActions.map(a => a.type === 'inspiratie' ? a.max : null);
-        const dataExpiratie = measurementActions.map(a => a.type === 'expiratie' ? a.max : null);
+        
+        let dataInspiratie, dataExpiratie, yAxisLabel, yAxisConfig;
+        
+        if (chartType === 'duration') {
+            // Duur grafiek: Y-as toont de duur in seconden
+            dataInspiratie = measurementActions.map(a => a.type === 'inspiratie' ? a.duration : null);
+            dataExpiratie = measurementActions.map(a => a.type === 'expiratie' ? a.duration : null);
+            yAxisLabel = 'Duur (seconden)';
+            yAxisConfig = {
+                beginAtZero: true,
+                title: {
+                    display: true,
+                    text: yAxisLabel
+                }
+            };
+        } else {
+            // Waarden grafiek: Y-as toont de ademhalingswaarden (origineel gedrag)
+            dataInspiratie = measurementActions.map(a => a.type === 'inspiratie' ? a.max : null);
+            dataExpiratie = measurementActions.map(a => a.type === 'expiratie' ? a.max : null);
+            yAxisLabel = 'Ademhalingswaarde';
+            yAxisConfig = {
+                beginAtZero: true,
+                title: {
+                    display: true,
+                    text: yAxisLabel
+                }
+            };
+        }
+        
         measurementChart = new Chart(chartCanvas, {
             type: 'bar',
             data: {
@@ -472,8 +841,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     legend: { display: true }
                 },
                 scales: {
-                    x: { stacked: true },
-                    y: { beginAtZero: true }
+                    x: { 
+                        stacked: true,
+                        title: {
+                            display: true,
+                            text: 'Ademhalingsacties'
+                        }
+                    },
+                    y: yAxisConfig
                 }
             }
         });
@@ -574,6 +949,15 @@ document.addEventListener('DOMContentLoaded', function() {
     exportBtn.disabled = true;
     stopBtn.disabled = true;
     
+    // Event listener voor grafiek type selector
+    const chartTypeSelect = document.getElementById('chartType');
+    chartTypeSelect.addEventListener('change', () => {
+        // Herteken de grafiek wanneer het type wordt gewijzigd
+        if (measurementActions.length > 0) {
+            renderMeasurementChart();
+        }
+    });
+    
     // --- Testmodus dropdown en instellingen tonen ---
     const testModeSelect = document.getElementById('testModeSelect');
     const testModeSettings = document.getElementById('testModeSettings');
@@ -591,11 +975,11 @@ document.addEventListener('DOMContentLoaded', function() {
         let html = '';
         const s = collectSettingsFromUI();
         if (selectedTestMode === 'gpio') {
-            html = `<b>3,5mm Output instellingen:</b><br>Drempel inspiratie: <b>${s.inhale_gpio_threshold}</b><br>Drempel expiratie: <b>${s.blow_gpio_threshold}</b>`;
+            html = `<b>3,5mm Output instellingen:</b><br>Drempel inspiratie: <b>${s.inhale_gpio_threshold}</b><br>Drempel expiratie: <b>${s.blow_gpio_threshold}</b><br>Hold tijd: <b>${s.gpio_duration} ms</b>`;
         } else if (selectedTestMode === 'joystick') {
             html = `<b>Joystick/Gamepad instellingen:</b><br>Max inademen: <b>${s.joystick_inhale_max}</b><br>Max uitademen: <b>${s.joystick_exhale_max}</b><br>Deadzone: <b>${s.deadzone}</b>`;
         } else if (selectedTestMode === 'pep') {
-            html = `<b>PEP Modus instellingen:</b><br>Doelwaarde: <b>${s.pep_target_value}</b><br>Succes tijd: <b>${s.pep_hold_time}</b> sec<br>Herhalingen: <b>${s.pep_repeat_count}</b>`;
+            html = `<b>PEP Modus instellingen:</b><br>Doelwaarde: <b>${s.pep_target_value}</b><br>Succes tijd: <b>${s.pep_hold_time}</b> sec<br>Herhalingen: <b>${s.pep_repeat_count}</b><br><br><b>Huidige voortgang:</b><br><div style="display:flex;align-items:center;gap:12px;margin-top:8px;"><span style="font-size:1.2em;font-weight:bold;color:#4caf50;">Herhalingen: <span id="pepProgressCounter">0</span>/${s.pep_repeat_count}</span><button class="material-btn" id="pepResetBtn" style="padding:4px 8px;font-size:0.9em;">Reset</button></div>`;
         } else if (selectedTestMode === 'mp3') {
             html = `<b>MP3 Speler instellingen:</b><br>Min. volume: <b>${s.min_volume}</b><br>Max. volume: <b>${s.max_volume}</b><br>Gevoeligheid: <b>${s.mp3_sensitivity}</b>`;
         } else if (selectedTestMode === 'led') {
@@ -606,6 +990,56 @@ document.addEventListener('DOMContentLoaded', function() {
         testModeSettings.innerHTML = html;
     }
     renderTestModeSettings();
+    
+    // === PEP Modus Voortgang Functionaliteit ===
+    // PEP voortgang teller bijwerken
+    function updatePepProgressCounter() {
+        const counter = document.getElementById('pepProgressCounter');
+        if (counter && window.pepProgressData) {
+            counter.textContent = window.pepProgressData.current;
+            console.log(`PEP counter UI bijgewerkt naar: ${window.pepProgressData.current}/${window.pepProgressData.total}`);
+        }
+    }
+    
+    // PEP voortgang resetten
+    function resetPepProgress() {
+        if (window.pepProgressData) {
+            window.pepProgressData.current = 0;
+            updatePepProgressCounter();
+            const debugCheckbox = document.getElementById('enableDebug');
+        if (debugCheckbox && debugCheckbox.checked) {
+            console.log('PEP voortgang gereset');
+        }
+        }
+    }
+    
+    // PEP reset knop event listener
+    document.addEventListener('click', (e) => {
+        if (e.target && e.target.id === 'pepResetBtn') {
+            resetPepProgress();
+        }
+    });
+    
+    // PEP voortgang data object
+    window.pepProgressData = { current: 0, total: 5 };
+    
+    // Browser MP3 afspelen functie
+    window.playPepRewardMp3 = function(mp3File) {
+        try {
+            const audio = new Audio(mp3File);
+            audio.volume = 0.8;
+            audio.play().then(() => {
+                const debugCheckbox = document.getElementById('enableDebug');
+        if (debugCheckbox && debugCheckbox.checked) {
+            console.log(`🎵 Browser MP3 afgespeeld: ${mp3File}`);
+        }
+            }).catch(e => {
+                console.error(`❌ Fout bij afspelen MP3: ${e}`);
+            });
+        } catch (e) {
+            console.error(`❌ Fout bij maken audio object: ${e}`);
+        }
+    };
     
     // --- PDF-export aanpassen ---
     exportBtn.addEventListener('click', async () => {
@@ -804,7 +1238,10 @@ document.addEventListener('DOMContentLoaded', function() {
     function collectSettingsFromUI() {
         // Verzamel alle relevante instellingen uit de UI met de juiste keys voor het device
         const settings = {
+            // Debug
+            debug_enabled: document.getElementById('enableDebug') ? document.getElementById('enableDebug').checked : false,
             // Joystick/Gamepad
+            joystick_mode_enabled: document.getElementById('enableJoystick').checked,
             joystick_inhale_max: parseFloat(document.getElementById('joystickInhaleMax').value),
             joystick_exhale_max: parseFloat(document.getElementById('joystickExhaleMax').value),
             control_mode: document.getElementById('controlMode').value,
@@ -816,6 +1253,7 @@ document.addEventListener('DOMContentLoaded', function() {
             blow_threshold: parseFloat(document.getElementById('expiratieThreshold').value),
             inhale_threshold: parseFloat(document.getElementById('inspiratieThreshold').value),
             // GPIO
+            gpio_mode_enabled: document.getElementById('enableGPIO').checked,
             blow_gpio_threshold: parseFloat(document.getElementById('gpioExhaleThreshold').value),
             inhale_gpio_threshold: parseFloat(document.getElementById('gpioInhaleThreshold').value),
             gpio_duration: parseInt(document.getElementById('gpioDuration').value),
@@ -827,7 +1265,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // PEP Modus
             pep_mode_enabled: document.getElementById('enablePEP').checked,
             pep_target_value: parseFloat(document.getElementById('pepTarget').value),
-            pep_hold_time: parseInt(document.getElementById('pepSuccessTime').value),
+            pep_hold_time: parseFloat(document.getElementById('pepSuccessTime').value),
             pep_start_brightness: parseInt(document.getElementById('pepStartBrightness').value) / 100,
             pep_max_brightness: parseInt(document.getElementById('pepMaxBrightness').value) / 100,
             pep_blink_times: parseInt(document.getElementById('pepBlinkCount').value),
@@ -846,6 +1284,7 @@ document.addEventListener('DOMContentLoaded', function() {
             pep_reward_led_effect: pepRewardType.value === 'led' ? document.getElementById('pepRewardLedEffect').value : '',
             pep_reward_led_brightness: pepRewardType.value === 'led' ? parseInt(document.getElementById('pepRewardLedBrightness').value) / 100 : 0,
             pep_reward_gpio_duration: pepRewardType.value === 'gpio' ? parseInt(document.getElementById('pepRewardGpioDuration').value) : 0,
+            pep_reward_browser_mp3: document.getElementById('pepRewardBrowserMp3') ? document.getElementById('pepRewardBrowserMp3').value : "muziek/applaus.mp3",
         };
         return settings;
     }
@@ -867,16 +1306,145 @@ document.addEventListener('DOMContentLoaded', function() {
         setTimeout(()=>{ exportSettingsBtn.textContent = 'Exporteer'; }, 1200);
     });
     
+    // === Real-time sync voor alle modus checkboxes ===
+    // Joystick checkbox event listener
+    const joystickCheckbox = document.getElementById('enableJoystick');
+    if (joystickCheckbox) {
+        joystickCheckbox.addEventListener('change', () => {
+            const enabled = joystickCheckbox.checked;
+            sendSettingUpdate({ 'joystick_mode_enabled': enabled });
+            const debugCheckbox = document.getElementById('enableDebug');
+            if (debugCheckbox && debugCheckbox.checked) {
+                console.log('Joystick modus:', enabled ? 'ingeschakeld' : 'uitgeschakeld');
+            }
+        });
+    }
+    
+    // Alle andere modus checkboxes real-time maken
+    const gpioCheckbox = document.getElementById('enableGPIO');
+    if (gpioCheckbox) {
+        gpioCheckbox.addEventListener('change', () => {
+            const enabled = gpioCheckbox.checked;
+            // Stuur GPIO modus instelling naar device
+            const gpioSettings = {
+                'gpio_mode_enabled': enabled,
+                'gpio_duration': enabled ? parseInt(document.getElementById('gpioDuration').value) : 0
+            };
+            sendSettingUpdate(gpioSettings);
+            if (debugCheckbox && debugCheckbox.checked) {
+                debugLog('GPIO modus:', enabled ? 'ingeschakeld' : 'uitgeschakeld');
+            }
+        });
+    }
+
+    // Deadzone slider real-time maken
+    const deadzoneSlider = document.getElementById('deadzone');
+    if (deadzoneSlider) {
+        deadzoneSlider.addEventListener('input', () => {
+            const value = parseFloat(deadzoneSlider.value);
+            // Update de value display
+            const valueDisplay = document.getElementById('deadzoneValue');
+            if (valueDisplay) {
+                valueDisplay.textContent = value.toFixed(2);
+            }
+            sendSettingUpdate({ 'deadzone': value });
+            debugLog('Deadzone aangepast naar:', value);
+        });
+    }
+
+    // Joystick max waarden sliders real-time maken
+    const joystickInhaleMaxSlider = document.getElementById('joystickInhaleMax');
+    if (joystickInhaleMaxSlider) {
+        joystickInhaleMaxSlider.addEventListener('input', () => {
+            const value = parseFloat(joystickInhaleMaxSlider.value);
+            sendSettingUpdate({ 'joystick_inhale_max': value });
+            debugLog('Joystick inademen max aangepast naar:', value);
+        });
+    }
+
+    const joystickExhaleMaxSlider = document.getElementById('joystickExhaleMax');
+    if (joystickExhaleMaxSlider) {
+        joystickExhaleMaxSlider.addEventListener('input', () => {
+            const value = parseFloat(joystickExhaleMaxSlider.value);
+            sendSettingUpdate({ 'joystick_exhale_max': value });
+            debugLog('Joystick uitademen max aangepast naar:', value);
+        });
+    }
+    
+    const ledCheckbox = document.getElementById('enableLED');
+    if (ledCheckbox) {
+        ledCheckbox.addEventListener('change', () => {
+            const enabled = ledCheckbox.checked;
+            sendSettingUpdate({ 'led_enabled': enabled });
+            debugLog('LED modus:', enabled ? 'ingeschakeld' : 'uitgeschakeld');
+        });
+    }
+    
+    const pepCheckbox = document.getElementById('enablePEP');
+    if (pepCheckbox) {
+        pepCheckbox.addEventListener('change', () => {
+            const enabled = pepCheckbox.checked;
+            sendSettingUpdate({ 'pep_mode_enabled': enabled });
+            debugLog('PEP modus:', enabled ? 'ingeschakeld' : 'uitgeschakeld');
+        });
+    }
+    
+    const mp3Checkbox = document.getElementById('enableMP3');
+    if (mp3Checkbox) {
+        mp3Checkbox.addEventListener('change', () => {
+            const enabled = mp3Checkbox.checked;
+            sendSettingUpdate({ 'dfplayer_enabled': enabled });
+            debugLog('MP3 modus:', enabled ? 'ingeschakeld' : 'uitgeschakeld');
+        });
+    }
+    
+    // === Debug Toggle Event Listener ===
+    const debugCheckbox = document.getElementById('enableDebug');
+    if (debugCheckbox) {
+        debugCheckbox.addEventListener('change', () => {
+            const enabled = debugCheckbox.checked;
+            sendSettingUpdate({ 'debug_enabled': enabled });
+            debugLog('Debug output:', enabled ? 'ingeschakeld' : 'uitgeschakeld');
+        });
+    }
+    
+    // === Real-time sync voor joystick richtingen ===
+    const blowDirectionSelect = document.getElementById('blowDirection');
+    if (blowDirectionSelect) {
+        blowDirectionSelect.addEventListener('change', () => {
+            const direction = blowDirectionSelect.value;
+            sendSettingUpdate({ 'blow_direction': direction });
+            debugLog('Blazen richting aangepast naar:', direction);
+        });
+    }
+    
+    const inhaleDirectionSelect = document.getElementById('inhaleDirection');
+    if (inhaleDirectionSelect) {
+        inhaleDirectionSelect.addEventListener('change', () => {
+            const direction = inhaleDirectionSelect.value;
+            sendSettingUpdate({ 'inhale_direction': direction });
+            debugLog('Inademen richting aangepast naar:', direction);
+        });
+    }
+    
     // === Spelmodi aanvinken op basis van settings.json ===
     function updateModeCheckboxesFromSettings(settings) {
-        console.log("updateModeCheckboxesFromSettings aangeroepen", settings);
+        debugLog("updateModeCheckboxesFromSettings aangeroepen", settings);
+        // Debug
+        const debugBox = document.getElementById('enableDebug');
+        if (debugBox && settings.debug_enabled !== undefined) {
+            debugBox.checked = settings.debug_enabled;
+        }
         // Joystick/Gamepad
         const joystickBox = document.getElementById('enableJoystick');
-        console.log('enableJoystick:', joystickBox);
-        joystickBox.checked = (settings.control_mode === 'joystick');
+        debugLog('enableJoystick:', joystickBox);
+        joystickBox.checked = settings.joystick_mode_enabled !== false; // Default true als niet ingesteld
         if (settings.joystick_inhale_max !== undefined) document.getElementById('joystickInhaleMax').value = settings.joystick_inhale_max;
         if (settings.joystick_exhale_max !== undefined) document.getElementById('joystickExhaleMax').value = settings.joystick_exhale_max;
-        if (settings.control_mode !== undefined) document.getElementById('controlMode').value = settings.control_mode;
+        if (settings.control_mode !== undefined) {
+            document.getElementById('controlMode').value = settings.control_mode;
+            updateControlModeUI(); // Update de UI om de juiste controls te tonen
+        }
         if (settings.deadzone !== undefined) document.getElementById('deadzone').value = settings.deadzone;
         if (settings.blow_direction !== undefined) document.getElementById('blowDirection').value = settings.blow_direction;
         if (settings.inhale_direction !== undefined) document.getElementById('inhaleDirection').value = settings.inhale_direction;
@@ -884,20 +1452,19 @@ document.addEventListener('DOMContentLoaded', function() {
         if (settings.inhale_button !== undefined) document.getElementById('inspiratieButton').value = settings.inhale_button;
         if (settings.blow_threshold !== undefined) document.getElementById('expiratieThreshold').value = settings.blow_threshold;
         if (settings.inhale_threshold !== undefined) document.getElementById('inspiratieThreshold').value = settings.inhale_threshold;
+        
+        // Update knoppen testbalken na het laden van settings
+        if (window.lastBreathValue !== undefined) {
+            updateButtonTestbars(window.lastBreathValue);
+        }
         // 3,5mm Output
         const gpioBox = document.getElementById('enableGPIO');
-        console.log('enableGPIO:', gpioBox);
-        gpioBox.checked = (
-            (settings.gpio_duration && settings.gpio_duration > 0) ||
-            (settings.blow_gpio_threshold !== undefined) ||
-            (settings.inhale_gpio_threshold !== undefined)
-        );
+        gpioBox.checked = settings.gpio_mode_enabled === true;
         if (settings.blow_gpio_threshold !== undefined) document.getElementById('gpioExhaleThreshold').value = settings.blow_gpio_threshold;
         if (settings.inhale_gpio_threshold !== undefined) document.getElementById('gpioInhaleThreshold').value = settings.inhale_gpio_threshold;
         if (settings.gpio_duration !== undefined) document.getElementById('gpioDuration').value = settings.gpio_duration;
         // LED Spel
         const ledBox = document.getElementById('enableLED');
-        console.log('enableLED:', ledBox);
         ledBox.checked = !!settings.led_enabled;
         if (settings.led_start_brightness !== undefined) document.getElementById('ledStartBrightness').value = Math.round(settings.led_start_brightness*100);
         if (settings.led_max_brightness !== undefined) document.getElementById('ledMaxBrightness').value = Math.round(settings.led_max_brightness*100);
@@ -910,18 +1477,24 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         // PEP Modus
         const pepBox = document.getElementById('enablePEP');
-        console.log('enablePEP:', pepBox);
         pepBox.checked = !!settings.pep_mode_enabled;
         if (settings.pep_target_value !== undefined) document.getElementById('pepTarget').value = settings.pep_target_value;
-        if (settings.pep_hold_time !== undefined && document.getElementById('pepSuccessTime')) document.getElementById('pepSuccessTime').value = settings.pep_hold_time;
+        if (settings.pep_hold_time !== undefined && document.getElementById('pepSuccessTime')) {
+            document.getElementById('pepSuccessTime').value = settings.pep_hold_time;
+            document.getElementById('pepSuccessTimeValue').textContent = parseFloat(settings.pep_hold_time).toFixed(1);
+        }
         if (settings.pep_start_brightness !== undefined && document.getElementById('pepStartBrightness')) document.getElementById('pepStartBrightness').value = Math.round(settings.pep_start_brightness*100);
         if (settings.pep_max_brightness !== undefined && document.getElementById('pepMaxBrightness')) document.getElementById('pepMaxBrightness').value = Math.round(settings.pep_max_brightness*100);
         if (settings.pep_blink_times !== undefined && document.getElementById('pepBlinkCount')) document.getElementById('pepBlinkCount').value = settings.pep_blink_times;
         if (settings.pep_blink_speed !== undefined && document.getElementById('pepBlinkSpeed')) document.getElementById('pepBlinkSpeed').value = settings.pep_blink_speed;
         if (settings.pep_repeat_count !== undefined && document.getElementById('pepRepeatCount')) document.getElementById('pepRepeatCount').value = settings.pep_repeat_count;
+        if (settings.pep_reward_browser_mp3 !== undefined && document.getElementById('pepRewardBrowserMp3')) document.getElementById('pepRewardBrowserMp3').value = settings.pep_reward_browser_mp3;
+        if (settings.pep_reward_gpio_duration !== undefined && document.getElementById('pepRewardGpioDuration')) {
+            document.getElementById('pepRewardGpioDuration').value = settings.pep_reward_gpio_duration;
+            document.getElementById('pepRewardGpioDurationValue').textContent = settings.pep_reward_gpio_duration;
+        }
         // MP3 Speler
         const mp3Box = document.getElementById('enableMP3');
-        console.log('enableMP3:', mp3Box);
         mp3Box.checked = !!settings.dfplayer_enabled;
         if (settings.min_volume !== undefined && document.getElementById('mp3MinVolume')) document.getElementById('mp3MinVolume').value = settings.min_volume;
         if (settings.max_volume !== undefined && document.getElementById('mp3MaxVolume')) document.getElementById('mp3MaxVolume').value = settings.max_volume;
@@ -930,32 +1503,188 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     // --- Settings automatisch toepassen bij laden (indien settingsCache gevuld) ---
     if (window.settingsCache && Object.keys(window.settingsCache).length > 0) {
-        console.log('settingsCache gevonden', window.settingsCache);
         updateModeCheckboxesFromSettings(window.settingsCache);
     }
     
-    importSettingsBtn.addEventListener('click', () => {
+    // Backup functie implementatie
+    const copySettingsBtn = document.getElementById('copySettings');
+    const backupNameInput = document.getElementById('backupName');
+    const backupFileInput = document.getElementById('backupFile');
+    
+    // Exporteer instellingen naar PC bestand
+    exportSettingsBtn.addEventListener('click', () => {
         try {
-            const settings = JSON.parse(settingsExportTextarea.value);
-            settingsCache = settings; // settingsCache vullen!
-            console.log('Importeren settings:', settings);
-            updateModeCheckboxesFromSettings(settings);
+            const backupName = backupNameInput.value.trim() || 'groovtube_backup';
+            const jsonData = JSON.stringify(settingsCache, null, 2);
+            const blob = new Blob([jsonData], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${backupName}_${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            setStatus(`Backup geëxporteerd: ${a.download}`, true);
+            showToast(`✅ Backup geëxporteerd: ${a.download}`, 'success');
         } catch (e) {
-            alert('Ongeldige JSON!');
+            setStatus('Fout bij exporteren: ' + e.message, false);
+            showToast(`❌ Fout bij exporteren: ${e.message}`, 'error');
         }
     });
     
-    fetch('settings.json')
-        .then(response => {
-            if (!response.ok) throw new Error('settings.json niet gevonden');
-            return response.json();
-        })
-        .then(settings => {
-            settingsCache = settings;
-            updateModeCheckboxesFromSettings(settings);
-            console.log('Automatisch settings.json geladen:', settings);
-        })
-        .catch(err => console.log('Kon settings.json niet automatisch laden:', err));
-    
+    // Importeer instellingen van PC bestand
+    backupFileInput.addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const jsonData = e.target.result;
+                
+                // Controleer of het bestand niet leeg is
+                if (!jsonData.trim()) {
+                    throw new Error('Bestand is leeg');
+                }
+                
+                const settings = JSON.parse(jsonData);
+                
+                // Controleer of het een geldig settings object is
+                if (typeof settings !== 'object' || settings === null) {
+                    throw new Error('Bestand bevat geen geldige instellingen');
+                }
+                
+                // Controleer of er tenminste enkele instellingen zijn
+                const settingKeys = Object.keys(settings);
+                if (settingKeys.length === 0) {
+                    throw new Error('Bestand bevat geen instellingen');
+                }
+                
+                // Update de UI met de geïmporteerde instellingen
+                settingsCache = { ...settingsCache, ...settings };
+                updateModeCheckboxesFromSettings(settings);
+                updateSlidersFromSettings(settings);
+                
+                            // Update de settings export area
+            const settingsExportArea = document.getElementById('settingsExport');
+            if (settingsExportArea) {
+                settingsExportArea.value = JSON.stringify(settingsCache, null, 2);
+            }
+                
+                // Stuur alle instellingen naar het device
+                Object.keys(settings).forEach(key => {
+                    sendCommand('SET:settings::' + JSON.stringify({ [key]: settings[key] }));
+                });
+                
+                setStatus(`✅ Backup succesvol geïmporteerd: ${file.name} (${settingKeys.length} instellingen) - UI en device bijgewerkt`, true);
+                showToast(`✅ Backup geïmporteerd: ${file.name} (${settingKeys.length} instellingen)`, 'success');
+                backupFileInput.value = ''; // Reset file input
+                
+                // Debug: toon welke instellingen zijn geïmporteerd
+                debugLog('Backup geïmporteerd:', settings);
+                debugLog('Aantal geïmporteerde instellingen:', settingKeys.length);
+            } catch (e) {
+                setStatus(`❌ Fout bij importeren: ${e.message}`, false);
+                showToast(`❌ Fout bij importeren: ${e.message}`, 'error');
+                console.error('Import error:', e);
+                backupFileInput.value = ''; // Reset file input bij fout
+            }
+        };
+        
+        // Foutafhandeling voor het lezen van het bestand
+        reader.onerror = () => {
+            setStatus('❌ Fout bij het lezen van het bestand', false);
+            showToast('❌ Fout bij het lezen van het bestand', 'error');
+            backupFileInput.value = ''; // Reset file input
+        };
+        
+        reader.readAsText(file);
     });
     
+    // Kopieer instellingen naar klembord
+    copySettingsBtn.addEventListener('click', () => {
+        try {
+            const jsonData = JSON.stringify(settingsCache, null, 2);
+            navigator.clipboard.writeText(jsonData).then(() => {
+                setStatus('Instellingen gekopieerd naar klembord', true);
+                showToast('✅ Instellingen gekopieerd naar klembord', 'success');
+            }).catch(() => {
+                setStatus('Fout bij kopiëren naar klembord', false);
+                showToast('❌ Fout bij kopiëren naar klembord', 'error');
+            });
+        } catch (e) {
+            setStatus('Fout bij kopiëren: ' + e.message, false);
+            showToast(`❌ Fout bij kopiëren: ${e.message}`, 'error');
+        }
+    });
+    
+    // Importeer instellingen van klembord
+    importSettingsBtn.addEventListener('click', () => {
+        try {
+            const jsonData = settingsExportArea.value.trim();
+            if (!jsonData) {
+                setStatus('❌ Voer eerst JSON data in het tekstvak', false);
+                showToast('❌ Voer eerst JSON data in het tekstvak', 'error');
+                return;
+            }
+            
+            const settings = JSON.parse(jsonData);
+            
+            // Controleer of het een geldig settings object is
+            if (typeof settings !== 'object' || settings === null) {
+                throw new Error('Tekst bevat geen geldige instellingen');
+            }
+            
+            // Controleer of er tenminste enkele instellingen zijn
+            const settingKeys = Object.keys(settings);
+            if (settingKeys.length === 0) {
+                throw new Error('Tekst bevat geen instellingen');
+            }
+            
+            // Update de UI met de geïmporteerde instellingen
+            settingsCache = { ...settingsCache, ...settings };
+            updateModeCheckboxesFromSettings(settings);
+            updateSlidersFromSettings(settings);
+            
+            // Update de settings export area
+            const settingsExportArea = document.getElementById('settingsExport');
+            if (settingsExportArea) {
+                settingsExportArea.value = JSON.stringify(settingsCache, null, 2);
+            }
+            
+            // Stuur alle instellingen naar het device
+            Object.keys(settings).forEach(key => {
+                sendCommand('SET:settings::' + JSON.stringify({ [key]: settings[key] }));
+            });
+            
+            setStatus(`✅ Klembord instellingen succesvol geïmporteerd (${settingKeys.length} instellingen) - UI en device bijgewerkt`, true);
+            showToast(`✅ Klembord instellingen geïmporteerd (${settingKeys.length} instellingen)`, 'success');
+            
+            // Debug: toon welke instellingen zijn geïmporteerd
+            debugLog('Klembord instellingen geïmporteerd:', settings);
+            debugLog('Aantal geïmporteerde instellingen:', settingKeys.length);
+        } catch (e) {
+            setStatus(`❌ Fout bij importeren van klembord: ${e.message}`, false);
+            showToast(`❌ Fout bij importeren van klembord: ${e.message}`, 'error');
+            console.error('Klembord import error:', e);
+        }
+    });
+    
+    // Laad instellingen bij startup (via device verbinding)
+    // Instellingen worden geladen wanneer de gebruiker verbinding maakt met het device
+    console.log('Instellingen worden geladen via device verbinding');
+    
+    // Functie om settings export area bij te werken
+    function updateSettingsExportArea() {
+        const settingsExportArea = document.getElementById('settingsExport');
+        if (settingsExportArea && settingsCache) {
+            settingsExportArea.value = JSON.stringify(settingsCache, null, 2);
+        }
+    }
+    
+    // Initialiseer de 'unsaved changes' indicator
+    updateUnsavedChangesIndicator();
+    
+    // Sluit de hoofdfunctie
+    });
